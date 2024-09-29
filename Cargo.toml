@@ -12,6 +12,9 @@ chrono = "*"
 serde = { version = "1.0", features = ["derive"] }
 config = "*"
 toml = "*"
+base64 = "*"
+reqwest = { version = "*", features = ["blocking", "json"] }
+tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
 toml = "*"

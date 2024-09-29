@@ -1,5 +1,4 @@
-SERVER = "your_server_ip"
 USERNAME = "sharefilesuser"
 PASSWORD = "your_password"
 LINK_TEMPLATE = "http://your_server/files/{file_name}?key=your_key"
-REMOTE_PATH = "/var/www/sharedfiles"
+REMOTE_PATH = "http://85.198.110.190:8080/upload_files"

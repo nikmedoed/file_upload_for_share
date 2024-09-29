@@ -1,16 +1,18 @@
 use crate::err_log::log_error;
-use ssh2::Session;
 use std::fs::File;
-use std::net::TcpStream;
 use std::path::Path;
 use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
 use chrono::Utc;
 use notify_rust::Notification;
-use std::io::{self};
+use reqwest::blocking::Client;
+use std::io::{BufReader};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use base64::engine::general_purpose;
+use std::error::Error as StdError;
+use base64::Engine as _;
 
 struct Settings {
-    server: String,
     username: String,
     password: String,
     link_template: String,
@@ -20,7 +22,6 @@ struct Settings {
 impl Settings {
     pub(crate) fn new() -> Self {
         Settings {
-            server: env!("SERVER").to_string(),
             username: env!("USERNAME").to_string(),
             password: env!("PASSWORD").to_string(),
             link_template: env!("LINK_TEMPLATE").to_string(),
@@ -29,64 +30,52 @@ impl Settings {
     }
 }
 
+
+
+
 fn send_file(
     file_path: &str,
     remote_filename: &str,
     settings: &Settings,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let tcp = TcpStream::connect(format!("{}:22", settings.server)).map_err(|e| {
-        log_error(&format!("Error connecting to server: {}", e));
+) -> Result<(), Box<dyn StdError>> {
+    let local_file = File::open(file_path).map_err(|e| {
+        eprintln!("Error opening local file: {}", e);
         e
     })?;
+    let file_reader = BufReader::new(local_file);
 
-    let mut session = Session::new().map_err(|e| {
-        log_error(&format!("Error creating session: {}", e));
-        e
-    })?;
+    let upload_url = format!("{}/{}", settings.remote_path, remote_filename);
 
-    session.set_tcp_stream(tcp);
-    session.handshake().map_err(|e| {
-        log_error(&format!("Error during SSH handshake: {}", e));
-        e
-    })?;
+    let auth_header_value = format!(
+        "Basic {}",
+        general_purpose::STANDARD.encode(format!("{}:{}", settings.username, settings.password))
+    );
 
-    session.userauth_password(&settings.username, &settings.password).map_err(|e| {
-        log_error(&format!("Error during authentication: {}", e));
-        e
-    })?;
+    let client = Client::new();
 
-    if !session.authenticated() {
-        log_error("Authentication error");
-        return Err("Authentication error".into());
+    let response = client
+        .put(&upload_url)
+        .header(AUTHORIZATION, auth_header_value)
+        .header(CONTENT_TYPE, "application/octet-stream")
+        .body(reqwest::blocking::Body::new(file_reader))
+        .send()
+        .map_err(|e| {
+            eprintln!("Error during file upload: {}", e);
+            e
+        })?;
+
+    if !response.status().is_success() {
+        eprintln!("File upload failed with status: {}", response.status());
+        return Err(format!("File upload failed with status: {}", response.status()).into());
     }
 
-    let remote_file_path = format!("{}/{}", settings.remote_path, remote_filename);
-    let mut remote_file = session.scp_send(
-        Path::new(&remote_file_path),
-        0o644,
-        std::fs::metadata(file_path)?.len(),
-        None,
-    ).map_err(|e| {
-        log_error(&format!("Error opening remote file: {}", e));
-        e
-    })?;
-
-    let mut local_file = File::open(file_path).map_err(|e| {
-        log_error(&format!("Error opening local file: {}", e));
-        e
-    })?;
-
-    io::copy(&mut local_file, &mut remote_file).map_err(|e| {
-        log_error(&format!("Error copying file: {}", e));
-        e
-    })?;
-
+    println!("File uploaded successfully.");
     Ok(())
 }
 
 fn generate_unique_filename(original_name: &str) -> String {
     let timestamp = Utc::now().timestamp();
-    format!("{}_{}", timestamp, original_name)
+    format!("{}_{}", timestamp, original_name.replace(" ", "_"))
 }
 
 fn copy_link_to_clipboard(

@@ -1,38 +1,33 @@
-# Fast file sharing
+# Fast File Sharing
 
-Эта утилита создана для размещения больших файлов в бесплатной версии Notion. При импорте страниц, Notion не загружает файлы, а использует ссылки на оригинальные файлы. Благодаря этой утилите вы можете вставить ссылку на фото, видео или любой другой файл, будто этот файл загружен напрямую в Notion. Утилита позволяет быстро загружать такие файлы на ваш сервер.
+Эта утилита позволяет размещать большие файлы для встраивания в Notion, обходя ограничения бесплатной версии. Вместо загрузки файлов в Notion этот инструмент размещает файлы на вашем сервере и генерирует ссылки, которые можно вставить в страницы Notion. Файлы могут быть фотографиями, видео или другими мультимедийными данными, как если бы они были загружены напрямую в Notion.
 
 ## Настройка сервера
 
-### Шаг 1. Создание директории для хранения файлов
+### Шаг 1: Создание директории для хранения файлов
 
-Создайте новую директорию, которая будет использована для хранения файлов:
+Создайте директорию, которая будет использоваться для хранения файлов:
 
 ```bash
 sudo mkdir -p /var/www/sharedfiles
 ```
 
-Затем установите владельца и группу для этой директории, чтобы файлы автоматически наследовали правильные права:
+Установите правильные права доступа для владельца и группы, чтобы NGINX и пользователь, загружающий файлы, могли обращаться к директории:
 
 ```bash
 sudo chown -R www-data:www-data /var/www/sharedfiles
+sudo chmod -R 775 /var/www/sharedfiles
 ```
 
-Настройте права доступа для чтения и записи:
+### Шаг 2: Настройка setgid для автоматического назначения прав группы
 
-```bash
-sudo chmod -R 755 /var/www/sharedfiles
-```
-
-### Шаг 2. Настройка setgid для автоматических прав группы
-
-Для того чтобы новые файлы и папки, добавленные в директорию, автоматически получали группу `www-data`, настройте специальный бит setgid:
+Убедитесь, что новые файлы и папки, добавленные в директорию, автоматически наследуют группу `www-data`:
 
 ```bash
 sudo chmod g+s /var/www/sharedfiles
 ```
 
-### Шаг 3. Настройка Nginx для файлового хранилища
+### Шаг 3: Конфигурация Nginx для хранения файлов
 
 Создайте новый файл конфигурации Nginx, например, `/etc/nginx/sites-available/file_sharing_dynamic.conf`:
 
@@ -45,7 +40,7 @@ sudo nano /etc/nginx/sites-available/file_sharing_dynamic.conf
 ```nginx
 server {
     listen 80;
-    server_name your_domain_or_ip;
+    server_name 85.198.110.190;
 
     location /files/ {
         set $valid_key "your_secret_key";
@@ -55,7 +50,42 @@ server {
         }
 
         alias /var/www/sharedfiles/;
-        autoindex on;
+        types {
+            video/mp4 mp4;
+            video/webm webm;
+            video/ogg ogg;
+        }
+
+        add_header Accept-Ranges bytes;
+        add_header 'Access-Control-Allow-Origin' '*';
+        add_header 'Access-Control-Allow-Methods' 'GET, HEAD, OPTIONS';
+        add_header 'Access-Control-Allow-Headers' 'Origin, X-Requested-With, Content-Type, Accept';
+
+        default_type application/octet-stream;
+    }    
+}
+
+
+server {
+    listen 8080;
+    server_name 85.198.110.190;
+
+    location /upload_files/ {
+        dav_methods PUT DELETE MKCOL COPY MOVE;
+        client_body_temp_path /tmp/incoming;
+        alias /var/www/sharedfiles/;
+
+        create_full_put_path on;
+        dav_access user:rw group:rw all:r;
+
+        client_body_buffer_size 128k;
+        client_max_body_size 500M;
+
+        client_body_in_file_only clean;
+        default_type application/octet-stream;
+
+        auth_basic "Restricted Upload Area";
+        auth_basic_user_file /etc/nginx/.htpasswd;
     }
 }
 ```
@@ -73,39 +103,61 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### Шаг 4. Создание пользователя для загрузки файлов
+### Шаг 4: Создание пользователя для загрузки файлов
 
-Создайте пользователя, от имени которого будут загружаться файлы:
+Создайте пользователя, который будет использоваться для загрузки файлов:
 
 ```bash
 sudo adduser sharefilesuser
 ```
 
-Установите пароль для пользователя, следуя инструкциям. Далее, предоставьте этому пользователю права на директорию:
+Установите пароль для пользователя, следуя инструкциям. Затем предоставьте этому пользователю права на директорию:
 
 ```bash
-sudo chown -R sharefilesuser:www-data /var/www/nikita_to_notion
-sudo chmod -R 775 /var/www/nikita_to_notion
+sudo chown -R sharefilesuser:www-data /var/www/sharedfiles
+sudo chmod -R 775 /var/www/sharedfiles
 ```
 
 Примените бит setgid, чтобы все файлы, созданные этим пользователем, автоматически получали правильные права:
 
 ```bash
-sudo chmod g+s /var/www/nikita_to_notion
+sudo chmod g+s /var/www/sharedfiles
 ```
+
+### Шаг 5: Установка утилиты для работы с паролями и создание пользователя для аутентификации
+
+Чтобы включить базовую аутентификацию для загрузки файлов, установите утилиту для управления паролями:
+
+```bash
+sudo apt-get install apache2-utils
+```
+
+Затем создайте файл с именем пользователя и паролем для аутентификации:
+
+```bash
+htpasswd -c /etc/nginx/.htpasswd sharefilesuser
+```
+
+Вы будете запрошены на ввод пароля для учетной записи `sharefilesuser`. Этот пароль потребуется для загрузки файлов на сервер.
 
 ## Создание файла Config.toml
 
-Используйте файл [Config.example.toml](Config.example.toml) в качестве примера. В файле нужно указать:
+Используйте файл [Config.example.toml](Config.example.toml) как шаблон. В файле укажите:
 
-- Путь до директории для хранения файлов
-- Пользователя и пароль
+- Путь к директории хранения файлов
+- Имя пользователя и пароль
 - Адрес сервера
 - Шаблон ссылки с секретным ключом
 
 ## Сборка и запуск проекта
-- В директории проекта
-    ```cargo build --release```
-- Переместите [exe файл приложения](target%2Frelease%2Fupload_to_server.exe) в постоянное место хранения
-- Запустите один раз
-Теперь в меню есть пункт "Отправить файл на сервер", который загрузит и скопирует ссылку в буфер обмена.
+
+- В директории проекта выполните следующую команду для сборки проекта:
+    ```bash
+    cargo build --release
+    ```
+
+- Переместите [исполняемый файл приложения](target%2Frelease%2Fupload_to_server.exe) в постоянное место.
+
+- Запустите его один раз.
+
+Теперь появится пункт меню "Загрузить файл на сервер", который загрузит файл и скопирует ссылку в буфер обмена.
