@@ -1,0 +1,17 @@
+[package]
+name = "upload_to_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ssh2 = "*"
+clipboard = "*"
+notify-rust = "*"
+winreg = "*"
+chrono = "*"
+serde = { version = "1.0", features = ["derive"] }
+config = "*"
+toml = "*"
+
+[build-dependencies]
+toml = "*"
